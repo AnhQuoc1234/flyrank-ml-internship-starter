@@ -1,0 +1,92 @@
+# Ranking Signal Analysis: Do Observable Search Signals Predict Content Decline?
+
+- Author: Vuong Quoc Anh
+- Lane: Ranking Signal Analysis
+- Repo: https://github.com/AnhQuoc1234/flyrank-ml-internship-starter
+- Date: 10/9/2026
+
+## Abstract:
+- Content teams managing large page inventories cannot 
+manually review every page for decline risk so this project whether observable search signals including page position and impression volume which can help prioritize the review by using 9.8 million rows of real, pseudonymized search performance data from March 2026.
+
+## Acknowledgments & Data Credit
+- This work was built on the FlyRank ML Internship dataset, a pseudonymized warehouse release of real content and search performance data. Built on the FlyRank ML Internship dataset with following link below:
+[flyrank.ai](https://flyrank.ai).
+
+
+## 1. Problem Framing
+
+- This project is helping a content review team prioritize which pages to look at first when review capacity is limited. The analysis unit is one content page (`content_hash_id`) on its first half of March 2026 signals. 
+
+- The output is a ranked score with a reason code and an action tier (priority_review, review, monitor, monitor_low_priority). To do this, a human would focus on the flagged pages and move them to the top of their weekly queue instead of treating all pages equally.
+
+- The cost of a wrong call is two-sided: false positives waste reviewer time on a page that didn’t need attention; false negatives let a real decline go unnoticed longer, costing more traffic the longer it is missed. Data/ML helps here as no reviewer can manually scan 500K+.
+
+- Wrong calls are costly on both sides: a false positive wastes reviewer time on a page that didn't need it, and a false negative leaves a real decline undetected longer, costing more traffic the longer it is undetected . Data/ML helps with that as no reviewer can manually scan 500K+ content items for patterns at that scale – a ranked, evidence-based queue replaces guesswork with a defensible starting point, even if the underlying signal is modest.
+
+## 2. Data Safety
+
+- Data Used: `fact_content_daily_performance` partition of `month=2026-03` from FlyRank internship warehouse release (Hugging Face). 
+March 2026 was intentionally selected as a mid-panel month – the last month (June 2026, the `_sample` table) is a sealed test month held out so as to not use the natural outcome window of any past→future label.
+
+- Intentionally excluded: No FlyRank product decision outputs (`health_score`, `priority_score`, `action_type`) are present anywhere in this pipeline - they are not present in the released data, nor would they ever be used as model features if reconstructed, they are only external context.
+
+- Potential for leakage: The label (`is_declining`) is calculated by comparing impressions in the second half of March with impressions in the first half. Only first half fields (impressions_first, avg_position_first) are used as features - confirmed by explicit audit (Week 6) that there is no label-derived or future-window column in the feature set. client_hash_id and content_hash_id are pseudo-anonymous identifiers only used for grouping (train/test split, deduplication) - not as model features.
+
+- Public-safety confirmation: No client names, domains, URLs, or raw queries appear anywhere in this repo or report only pseudonymized hash IDs and aggregated metrics.
+
+## 3. Baseline
+- The baseline is a transparent rule: rank pages by `impressions_first` alone (first-half March volume), with no model involved. This was chosen after verifying two candidate signals directly in the data:
+
+- `avg_position_first`: verdict and MIXED. Decline rate was roughly flat (33-35%) across most position buckets, dropping only at 50+ (~26%). No clean, usable relationship.
+
+- `gsc_impressions` (volume): verdict and CONFIRMED. Decline rate rose monotonically from 24.5% (0-10 impressions) to 38.4% (2000+ impressions).
+
+Because only volume held up under scrutiny, the baseline rule scores purely on `impressions_first`. On the held-out, client-grouped test split, this baseline scores **AUC = 0.5448**, the number every model in this report is compared against, on the same split and metric.
+
+## 4. Model / Analysis
+
+- Method: Decision Tree classifier (`max_depth=4`), chosen alongside with Logistic Regression as a comparison pair. Logistic Regression was included because it's the natural linear step up from a single-signal rule; the Decision Tree was added because Signal 1's bucket-shaped, non-monotonic pattern suggested a threshold-based method might capture 
+structure a linear model couldn't.
+
+- Features (2, both first-half/pre-decision-point):** `impressions_first`, `avg_position_first`. Second-half fields and any label-derived value were deliberately excluded.
+
+- Target/proxy, in one sentence:** `is_declining` = whether a page's GSC impressions dropped more than 10% from the first half of March to the second half.
+
+## 5. Evaluation
+
+- Split: Client-grouped (`GroupShuffleSplit` on `client_hash_id`), 34 train clients / 9 test clients, zero overlap. This was chosen to deliver after the baseline playbook (Week 4) revealed real client concentration risk, a random split would let the model see pages from the same clients in both train and test, inflating apparent performance without proving it generalizes to a new client.
+
+- Model vs. baseline (same split, same metric — ROC AUC):
+
+| Method | AUC |
+|---|---|
+| Baseline (impressions_first only) | 0.5448 |
+| Logistic Regression | 0.4962 |
+| Logistic Regression (scaled) | 0.4962 |
+| Decision Tree (max_depth=4) | 0.5511 |
+
+- Before/after split comparison** (same Decision Tree, different splits):
+
+| Split | AUC | Client overlap |
+|---|---|---|
+| Random (naive) | 0.5578 | 41 of 41 clients in both sets |
+| Client-grouped (honest) | 0.5511 | 0 clients in both sets |
+
+- Base rate: 34% of pages in this sample are labeled declining, a worth stating alongside any accuracy-style number, since a model predicting "stable" for everyone would already be right 66% of the time.
+
+- Error analysis: At the default 0.5 threshold, the Decision Tree's confusion matrix shows it predicts "declining" for only 15 of 10,247 test pages, correctly catching just 7 of 3,646 actual decliners (recall ≈ 0.2%). The 64.4% headline accuracy is misleading and it comes from the modeldefaulting to "stable" almost everywhere. Five sampled false negatives showed probabilities clustered just below the 0.5 cutoff (0.34–0.37), plus a mix of real sharp declines, near-noise low-volume cases, and cases where position and impressions pointed in opposite directions.
+
+## 6. Interpretation
+Feature importance in the Decision Tree: `impressions_first` (0.887) dominates over `avg_position_first` (0.113) — consistent with the signal-check finding that only volume showed a real, monotonic relationship with decline.
+
+The central, honest finding of this project is a **negative result**: none of the modeled methods meaningfully beat a simple one-signal baseline, and adding model complexity (Logistic Regression, Decision Tree) did not reliably improve ranking quality — Logistic Regression actually scored below random guessing. This is a valid and useful 
+result: it means the two available first-half signals carry limited, mostly-redundant information about decline, and effort spent on model complexity would be better spent finding new signals or redefining the label (e.g., a longer or different decline window) than tuning these 
+two.
+
+## 7. Recommendation
+Based on `impressions_first` and `decline_prob`, pages are grouped into four action tiers:
+
+- priority_review (10,423 pages, a  high volume, high estimated risk) 
+
+- review (31,383, a high volume), monitor (77,249, standard volume), and monitor_low_priority (22,412 — very ow volume, signal close)

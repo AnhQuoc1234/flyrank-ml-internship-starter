@@ -1,0 +1,16 @@
+# Ranking Signal Analysis: Do Observable Search Signals Predict Content Decline?
+
+**Abstract:** Content teams managing large page inventories cannot 
+manually review every page for decline risk, so this project asks 
+whether observable search signals — page position and impression volume 
+— can help prioritize that review. Using 9.8 million rows of real, 
+pseudonymized search performance data from March 2026, I verified 
+candidate signals directly in the data, built a transparent baseline 
+rule, and compared it against Logistic Regression and Decision Tree 
+models under a leakage-checked, client-grouped validation split. Neither 
+model reliably outperformed the simple one-signal baseline (AUC 0.545 
+baseline vs. 0.551 best model), and error analysis revealed that a 
+seemingly strong accuracy score was hiding near-zero recall on actual 
+decliners. The result is an honest negative finding, translated into a 
+tiered, human-reviewed action playbook rather than an overconfident 
+automated system.
